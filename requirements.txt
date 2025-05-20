@@ -4,3 +4,6 @@ streamlit-lottie
 streamlit-extras      # countdown timer + layout helpers
 rich==13.7.0          # pinned to keep Streamlit happy
 supabase==2.3.0       # optional – only needed if you’ll connect to Supabase
+
+streamlit-extras     # bundle of cool widgets
+
