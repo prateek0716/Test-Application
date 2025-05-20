@@ -240,3 +240,7 @@ page_map = {
     "Stats": page_stats,
 }
 page_map[choice]()
+
+st.components.v1.iframe("https://my-leaderboard.vercel.app",
+                        height=450, scrolling=False)
+
