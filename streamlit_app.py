@@ -1,19 +1,19 @@
-# streamlit_app.py – Enhanced Duolingo-style MVP
+# streamlit_app.py – Enhanced Duolingo‑style MVP
 """
-CAT Prep × Gym-Nutrition Tracker (Gamified)
+CAT Prep × Gym‑Nutrition Tracker (Gamified)
 -------------------------------------------
 *Features*
-- On-boarding wizard – captures CAT target & nutrition goal.
+- On‑boarding wizard – captures CAT target & nutrition goal.
 - XP + Streak mechanics (study minutes = XP; macros met = bonus).
-- Progress ring, confetti at 100 % of study target.
-- Persistent storage via Supabase (cross-device).
+- Progress ring, confetti at 100 % of study target.
+- Persistent storage via Supabase (cross‑device).
 
 > **Setup**
 > 1. `pip install -r requirements.txt` (see list at bottom).  **Important:** we pin `rich<14` to satisfy Streamlit 1.35.0’s dependency.
 > 2. Add *Secrets* in Streamlit Cloud:
 >    ```
 >    SUPABASE_URL="https://xxxxx.supabase.co"
->    SUPABASE_KEY="your-anon-key"
+>    SUPABASE_KEY="your‑anon‑key"
 >    ```
 > 3. Deploy. First launch will run DB bootstrap (tables create if absent).
 """
@@ -110,7 +110,7 @@ def home_page(profile: dict):
     st.title("🧠 CATPrep × 🍗 MacroTracker")
     st.metric("Streak", f"{profile.get('streak', 0)} 🔥")
     st.metric("XP", profile.get("xp", 0))
-    st.info(f"Today’s focus: **{today_section()}** · Target study: **90 mins**")
+    st.info(f"Today’s focus: **{today_section()}** · Target study: **90 mins**")
 
 
 def study_page(profile: dict):
@@ -137,7 +137,7 @@ def meal_page(profile: dict):
             "item": item, "cal": int(cal), "protein": int(protein), "carbs": int(carbs), "fat": int(fat)
         }).execute()
         supabase.table(USER_TABLE).update({"xp": profile["xp"] + MEAL_BONUS, "last_active": date.today().isoformat()}).eq("id", profile["id"]).execute()
-        st.toast("Meal saved 🍏")
+        st.toast("Meal saved 🍏")
 
 
 def dashboard_page(profile: dict):
@@ -173,3 +173,12 @@ elif choice == "Meals":
     meal_page(profile)
 else:
     dashboard_page(profile)
+
+# ───────────────────────────── requirements.txt ─────────────────────────────
+"""
+streamlit==1.35.0
+pandas
+supabase==2.3.0
+# Pin **exact** rich version so Streamlit & Supabase both satisfy dependencies
+rich==13.7.0
+"""
