@@ -23,6 +23,7 @@ Supabase keys are provided.
 > supabase==2.3.0     # optional
 > ```
 """
+from streamlit_extras.row import row        # new widget
 from __future__ import annotations
 from datetime import date, timedelta, datetime
 import time, json, random
