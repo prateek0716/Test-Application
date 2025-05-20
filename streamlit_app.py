@@ -1,24 +1,23 @@
-# streamlit_app.py – Enhanced Duolingo‑style MVP
+# streamlit_app.py – Enhanced Duolingo-style MVP
 """
-CAT Prep × Gym‑Nutrition Tracker (Gamified)
+CAT Prep × Gym-Nutrition Tracker (Gamified)
 -------------------------------------------
-*Features added vs previous MVP*
-- On‑boarding wizard – captures CAT target & nutrition goal.
+*Features*
+- On-boarding wizard – captures CAT target & nutrition goal.
 - XP + Streak mechanics (study minutes = XP; macros met = bonus).
-- Progress ring, confetti at 100 % of study target.
-- Persistent storage via Supabase (cross‑device).
+- Progress ring, confetti at 100 % of study target.
+- Persistent storage via Supabase (cross-device).
 
 > **Setup**
-> 1. `pip install -r requirements.txt` (see bottom of file)
-> 2. Set env vars in Streamlit Cloud → *Secrets*:
+> 1. `pip install -r requirements.txt` (see list at bottom).  **Important:** we pin `rich<14` to satisfy Streamlit 1.35.0’s dependency.
+> 2. Add *Secrets* in Streamlit Cloud:
 >    ```
 >    SUPABASE_URL="https://xxxxx.supabase.co"
 >    SUPABASE_KEY="your-anon-key"
 >    ```
-> 3. Deploy. First launch will run DB bootstrap (tables if not exist).
+> 3. Deploy. First launch will run DB bootstrap (tables create if absent).
 """
 from __future__ import annotations
-import os
 from datetime import date, datetime, timedelta
 
 import streamlit as st
@@ -31,7 +30,7 @@ def get_supabase() -> Client | None:
     url = st.secrets.get("SUPABASE_URL")
     key = st.secrets.get("SUPABASE_KEY")
     if not (url and key):
-        st.warning("🔑 Supabase creds missing – data will not persist.")
+        st.warning("🔑 Supabase creds missing – data will not persist across sessions.")
         return None
     return create_client(url, key)
 
@@ -43,6 +42,7 @@ MEAL_TABLE = "meal_log"
 
 
 def bootstrap_db() -> None:
+    """Create core tables on first run (Postgres DDL via Supabase RPC)."""
     if not supabase:
         return
     for ddl in (
@@ -55,7 +55,7 @@ def bootstrap_db() -> None:
 if supabase:
     bootstrap_db()
 
-# ───────────────────────────── Session helpers ───────────────────────────────
+# ───────────────────────────── Session & profile helpers ─────────────────────
 @st.cache_data(show_spinner=False)
 def load_profile() -> dict | None:
     if not supabase or "user_id" not in st.session_state:
@@ -65,38 +65,14 @@ def load_profile() -> dict | None:
 
 
 def ensure_user():
-    if "user_id" in st.session_state:
-        return
-    # new session ⇒ ask name only (unique cookie would be nicer)
-    st.session_state.user_id = st.session_state.get("user_id") or None
-
+    """Initialise anonymous user key for the session until onboarding completes."""
+    if "user_id" not in st.session_state:
+        st.session_state.user_id = None
 
 # ───────────────────────────── Gamification logic ────────────────────────────
 XP_PER_MIN = 1
 MEAL_BONUS = 5
 
-
-def update_xp_and_streak(action_date: date):
-    if not supabase or not profile:
-        return
-    last_active = profile.get("last_active")
-    streak = profile.get("streak", 0)
-    xp = profile.get("xp", 0)
-    # streak calc
-    if last_active:
-        last_active = datetime.strptime(last_active, "%Y-%m-%d").date()
-        if action_date == last_active:
-            pass  # same day
-        elif action_date == last_active + timedelta(days=1):
-            streak += 1
-        else:
-            streak = 1
-    else:
-        streak = 1
-
-    supabase.table(USER_TABLE).update({"streak": streak, "xp": xp}).eq("id", profile["id"]).execute()
-
-# ───────────────────────────── UI Pages ──────────────────────────────────────
 SECTIONS = ("VARC", "DILR", "QA")
 
 def today_section() -> str:
@@ -121,69 +97,64 @@ def onboarding():
                 "xp": 0,
                 "last_active": date.today().isoformat(),
             }
-            resp = supabase.table(USER_TABLE).insert(data).execute() if supabase else {"data": [{"id": "demo"}]}
-            st.session_state.user_id = resp["data"][0]["id"] if supabase else "demo"
+            if supabase:
+                resp = supabase.table(USER_TABLE).insert(data).execute()
+                st.session_state.user_id = resp.data[0]["id"]
+            else:
+                st.session_state.user_id = "demo"
             st.rerun()
 
+# ───────────────────────────── Core pages ────────────────────────────────────
 
-def home_page():
+def home_page(profile: dict):
     st.title("🧠 CATPrep × 🍗 MacroTracker")
     st.metric("Streak", f"{profile.get('streak', 0)} 🔥")
     st.metric("XP", profile.get("xp", 0))
     st.info(f"Today’s focus: **{today_section()}** · Target study: **90 mins**")
 
 
-def study_page():
+def study_page(profile: dict):
     st.header("📚 Study Session")
-    mins = st.number_input("Minutes studied now", 0, 240, step=5)
-    if st.button("Log study") and mins > 0:
-        if supabase:
-            supabase.table(STUDY_TABLE).insert({"user_id": profile["id"], "date": date.today().isoformat(), "minutes": int(mins)}).execute()
-            supabase.table(USER_TABLE).update({"xp": profile["xp"] + mins * XP_PER_MIN, "last_active": date.today().isoformat()}).eq("id", profile["id"]).execute()
-        st.session_state.study_logged = True
+    mins = st.number_input("Minutes just studied", 0, 240, step=5)
+    if st.button("Log study") and mins > 0 and supabase:
+        supabase.table(STUDY_TABLE).insert({"user_id": profile["id"], "date": date.today().isoformat(), "minutes": int(mins)}).execute()
+        supabase.table(USER_TABLE).update({"xp": profile["xp"] + mins * XP_PER_MIN, "last_active": date.today().isoformat()}).eq("id", profile["id"]).execute()
         st.balloons()
         st.success("Logged & XP awarded!")
 
 
-
-def meal_page():
+def meal_page(profile: dict):
     st.header("🍽️ Meal Logger")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    item = c1.text_input("Item")
-    cal = c2.number_input("Cal", 0)
-    protein = c3.number_input("Protein", 0)
-    carbs = c4.number_input("Carbs", 0)
-    fat = c5.number_input("Fat", 0)
-    if st.button("Add meal") and item:
-        if supabase:
-            supabase.table(MEAL_TABLE).insert({
-                "user_id": profile["id"], "date": date.today().isoformat(),
-                "item": item, "cal": int(cal), "protein": int(protein), "carbs": int(carbs), "fat": int(fat)
-            }).execute()
-            supabase.table(USER_TABLE).update({"xp": profile["xp"] + MEAL_BONUS, "last_active": date.today().isoformat()}).eq("id", profile["id"]).execute()
+    cols = st.columns(5)
+    item = cols[0].text_input("Item")
+    cal = cols[1].number_input("Cal", 0)
+    protein = cols[2].number_input("Protein", 0)
+    carbs = cols[3].number_input("Carbs", 0)
+    fat = cols[4].number_input("Fat", 0)
+    if st.button("Add meal") and item and supabase:
+        supabase.table(MEAL_TABLE).insert({
+            "user_id": profile["id"], "date": date.today().isoformat(),
+            "item": item, "cal": int(cal), "protein": int(protein), "carbs": int(carbs), "fat": int(fat)
+        }).execute()
+        supabase.table(USER_TABLE).update({"xp": profile["xp"] + MEAL_BONUS, "last_active": date.today().isoformat()}).eq("id", profile["id"]).execute()
         st.toast("Meal saved 🍏")
 
 
-
-def dashboard_page():
+def dashboard_page(profile: dict):
     st.header("📊 Dashboard")
     if not supabase:
         st.info("Connect Supabase to enable dashboards.")
         return
+    # Study chart last 7 days
     study = supabase.table(STUDY_TABLE).select("date, minutes").eq("user_id", profile["id"]).gte("date", (date.today() - timedelta(days=6)).isoformat()).execute().data
     df = pd.DataFrame(study)
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
         st.line_chart(df, x="date", y="minutes")
     else:
-        st.info("No study data last 7 days.")
+        st.info("No study data in the last week.")
 
-    macros = supabase.rpc("daily_macros", {"uid": profile["id"], "dt": date.today().isoformat()}).execute() if supabase else {}
-    if macros and macros.data:
-        st.subheader("Today's Macro Totals")
-        st.dataframe(pd.DataFrame([macros.data]))
-
-# ─────────────────────────── Main router ─────────────────────────────────────
+# ───────────────────────────── Main router ───────────────────────────────────
 ensure_user()
 profile = load_profile()
 
@@ -192,13 +163,13 @@ if not profile:
     st.stop()
 
 st.sidebar.title("Menu")
-page = st.sidebar.radio("Go to", ("Home", "Study", "Meals", "Dashboard"))
+choice = st.sidebar.radio("Navigate", ("Home", "Study", "Meals", "Dashboard"))
 
-if page == "Home":
-    home_page()
-elif page == "Study":
-    study_page()
-elif page == "Meals":
-    meal_page()
+if choice == "Home":
+    home_page(profile)
+elif choice == "Study":
+    study_page(profile)
+elif choice == "Meals":
+    meal_page(profile)
 else:
-    dashboard_page()
+    dashboard_page(profile)
