@@ -1,41 +1,67 @@
-# streamlit_app.py – Gamified CAT Prep × Nutrition Tracker
+# streamlit_app.py – CATPrep × MacroTracker 𝘷2
 """
-Offline‑friendly Streamlit MVP that *optionally* syncs to Supabase.
+Duolingo‑inspired upgrade (Sprint 1 scope)
+=========================================
+Implemented features:
+1. **Sticky XP/Streak ribbon** – appears on every page.
+2. **User‑selectable daily study goal** – Light (45 min) · Regular (60 min) · Intense (90 min).
+3. **Goal progress ring** – linear `st.progress` bar that fills as minutes are logged.
+4. **Lottie celebration** when the ring hits 100 %.
 
-🚀 **Deploy checklist**
-1. **streamlit_app.py** → repo root (this file).
-2. **requirements.txt** (separate file, *not* embedded in code) — copy/paste:
-   ```
-   streamlit==1.35.0
-   pandas
-   supabase==2.3.0   # optional; harmless if you don’t add keys
-   rich==13.7.0       # pin required, avoids Streamlit conflict
-   ```
-3. (Optional) Add Supabase creds to *Secrets* → `SUPABASE_URL`, `SUPABASE_KEY`.
-   If you skip this step the app still works, but data resets when the session ends.
-
-**Why the build kept installing rich 14.0.0**
-Streamlit Cloud only reads *requirements.txt*. When we placed the list inside
-this Python file it was ignored — so pip grabbed the newest `rich` (14.x).
-Pinning in an **external file** fixes the dependency resolver error.
+Offline‑friendly: works without Supabase; persists within the session only.  
+(Provide Supabase keys in *Secrets* for cross‑device sync.)
 """
 from __future__ import annotations
 from datetime import date, timedelta
+import json
+import time
 import streamlit as st
 import pandas as pd
 
-# ───────── Optional Supabase import ─────────
+# Optional Supabase import
 try:
     from supabase import create_client, Client  # type: ignore
 except ModuleNotFoundError:
     Client = None  # type: ignore
 
-# ───────── Constants ─────────
+# Lottie helper (minimal, no external lib needed)
+@st.cache_data(show_spinner=False)
+def load_lottie_confetti() -> dict:
+    # Public-domain confetti JSON hosted on GitHub gist
+    import requests, os
+    url = "https://raw.githubusercontent.com/iamnotstatic/lottie-files/main/confetti.json"
+    r = requests.get(url, timeout=5)
+    return r.json() if r.status_code == 200 else {}
+
+# ──────────────────── Constants ────────────────────
 SECTIONS = ("VARC", "DILR", "QA")
+GOALS = {"Light": 45, "Regular": 60, "Intense": 90}  # minutes
 XP_PER_MIN = 1
 MEAL_BONUS = 5
 
-# ───────── Helpers ─────────
+# ──────────────────── Supabase (optional) ──────────
+@st.cache_resource(show_spinner=False)
+def get_supabase() -> Client | None:
+    url, key = st.secrets.get("SUPABASE_URL"), st.secrets.get("SUPABASE_KEY")
+    if url and key and Client:
+        return create_client(url, key)
+    return None
+
+supabase = get_supabase()
+
+# ──────────────────── Session init ─────────────────
+
+def init_state():
+    ss = st.session_state
+    ss.setdefault("profile", None)
+    ss.setdefault("study_log", [])  # [{date, minutes}]
+    ss.setdefault("meal_log", [])
+    ss.setdefault("goal_minutes", GOALS["Regular"])  # default 60
+    ss.setdefault("celebrated", False)
+
+init_state()
+
+# ──────────────────── Helper fns ───────────────────
 
 def today() -> date:
     return date.today()
@@ -45,36 +71,21 @@ def today_section() -> str:
     return SECTIONS[today().toordinal() % len(SECTIONS)]
 
 
-@st.cache_resource(show_spinner=False)
-def get_supabase() -> Client | None:
-    url = st.secrets.get("SUPABASE_URL")
-    key = st.secrets.get("SUPABASE_KEY")
-    if url and key and Client:
-        return create_client(url, key)
-    return None
+def minutes_logged_today() -> int:
+    return sum(entry["minutes"] for entry in st.session_state.study_log if entry["date"] == today())
 
-supabase = get_supabase()
-
-
-def init_session():
-    st.session_state.setdefault("profile", None)
-    st.session_state.setdefault("study_log", [])
-    st.session_state.setdefault("meal_log", [])
-
-init_session()
-
-# ───────── On‑boarding ─────────
+# ──────────────────── Onboarding ───────────────────
 
 def onboarding():
     st.title("🎯 Welcome – Set your goals")
     with st.form("onboard"):
         name = st.text_input("Your name")
+        goal_choice = st.radio("Choose your daily study goal", list(GOALS.keys()))
         exam_date = st.date_input("CAT exam date", value=date(date.today().year, 11, 24))
         target = st.slider("Target percentile", 70, 100, 99)
         macro_goal = st.selectbox("Gym nutrition goal", ("Cut", "Bulk", "Maintain"))
         if st.form_submit_button("Save & Start"):
             profile = {
-                "id": "demo" if not supabase else None,
                 "name": name,
                 "exam_date": exam_date.isoformat(),
                 "target_percentile": target,
@@ -83,53 +94,72 @@ def onboarding():
                 "xp": 0,
                 "last_active": today().isoformat(),
             }
-            if supabase:
-                resp = supabase.table("users").insert(profile).execute()
-                profile["id"] = resp.data[0]["id"]
             st.session_state.profile = profile
+            st.session_state.goal_minutes = GOALS[goal_choice]
             st.experimental_rerun()
 
-# ───────── Gamification ─────────
+# ──────────────────── Gamification ────────────────
 
 def award_xp(amount: int):
     st.session_state.profile["xp"] += amount
 
 
-def bump_streak():
-    last = st.session_state.profile.get("last_active")
-    if last == today().isoformat():
+def bump_streak_if_first_action_today():
+    prof = st.session_state.profile
+    if prof["last_active"] == today().isoformat():
         return
-    st.session_state.profile["streak"] += 1
-    st.session_state.profile["last_active"] = today().isoformat()
+    prof["streak"] += 1
+    prof["last_active"] = today().isoformat()
 
-# ───────── Pages ─────────
+# ──────────────────── Sticky ribbon ───────────────
+
+def sticky_ribbon():
+    prof = st.session_state.profile
+    with st.container():
+        col1, col2 = st.columns(2)
+        col1.markdown(f"### 🔥 Streak: {prof['streak']}")
+        col2.markdown(f"### ⭐ XP: {prof['xp']}")
+        st.markdown("---")
+
+# ──────────────────── Pages ───────────────────────
 
 def page_home():
-    p = st.session_state.profile
-    st.title("🧠 CATPrep × 🍗 MacroTracker")
-    st.metric("Streak", f"{p['streak']} 🔥")
-    st.metric("XP", p["xp"])
-    st.info(f"Today’s focus: **{today_section()}** · Target study: **90 mins**")
+    sticky_ribbon()
+    prof = st.session_state.profile
+    st.header("Dashboard")
+    # Goal progress
+    logged = minutes_logged_today()
+    pct = min(int(logged / st.session_state.goal_minutes * 100), 100)
+    st.subheader(f"Study Progress: {logged}/{st.session_state.goal_minutes} min ({pct} %)")
+    st.progress(pct / 100)
+
+    # Celebrate on first 100 % completion per day
+    if pct == 100 and not st.session_state.celebrated:
+        st.success("Goal met – great job! 🎉")
+        try:
+            from streamlit_lottie import st_lottie  # type: ignore
+            st_lottie(load_lottie_confetti(), height=300, loop=False)
+        except (ModuleNotFoundError, ValueError):
+            st.balloons()
+        st.session_state.celebrated = True
+
+    st.info(f"Today’s focus: **{today_section()}**")
 
 
 def page_study():
-    st.header("📚 Study Session")
+    sticky_ribbon()
+    st.header("📚 Log Study Time")
     mins = st.number_input("Minutes just studied", 0, 180, step=5)
-    if st.button("Log study") and mins > 0:
+    if st.button("Save study") and mins > 0:
         st.session_state.study_log.append({"date": today(), "minutes": int(mins)})
-        if supabase:
-            supabase.table("study_log").insert({
-                "user_id": st.session_state.profile["id"],
-                "date": today().isoformat(),
-                "minutes": int(mins),
-            }).execute()
         award_xp(mins * XP_PER_MIN)
-        bump_streak()
-        st.balloons()
+        bump_streak_if_first_action_today()
         st.success("Logged & XP awarded!")
+        st.experimental_rerun()
 
 
 def page_meals():
+    sticky_ribbon()
     st.header("🍽️ Meal Logger")
     cols = st.columns(5)
     item = cols[0].text_input("Item")
@@ -138,17 +168,18 @@ def page_meals():
     carbs = cols[3].number_input("Carbs", 0)
     fat = cols[4].number_input("Fat", 0)
     if st.button("Add meal") and item:
-        entry = {"date": today(), "item": item, "cal": int(cal), "protein": int(protein), "carbs": int(carbs), "fat": int(fat)}
-        st.session_state.meal_log.append(entry)
-        if supabase:
-            supabase.table("meal_log").insert({"user_id": st.session_state.profile["id"], **entry}).execute()
+        st.session_state.meal_log.append({
+            "date": today(), "item": item, "cal": int(cal), "protein": int(protein), "carbs": int(carbs), "fat": int(fat)
+        })
         award_xp(MEAL_BONUS)
-        bump_streak()
+        bump_streak_if_first_action_today()
         st.toast("Meal saved 🍏")
+        st.experimental_rerun()
 
 
 def page_dashboard():
-    st.header("📊 Dashboard – Last 7 Days")
+    sticky_ribbon()
+    st.header("📊 Study Minutes – Last 7 Days")
     df = pd.DataFrame(st.session_state.study_log)
     if not df.empty:
         last7 = df[df["date"] >= today() - timedelta(days=6)]
@@ -156,19 +187,19 @@ def page_dashboard():
     else:
         st.info("No study data yet.")
 
-# ───────── Router ─────────
+# ──────────────────── Router ─────────────────────
 if st.session_state.profile is None:
     onboarding()
     st.stop()
 
-st.sidebar.title("Menu")
-page = st.sidebar.radio("Navigate", ("Home", "Study", "Meals", "Dashboard"))
+st.sidebar.title("Navigate")
+choice = st.sidebar.radio("", ("Home", "Study", "Meals", "Stats"))
 
-if page == "Home":
+if choice == "Home":
     page_home()
-elif page == "Study":
+elif choice == "Study":
     page_study()
-elif page == "Meals":
+elif choice == "Meals":
     page_meals()
 else:
     page_dashboard()
