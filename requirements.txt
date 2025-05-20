@@ -1,4 +1,6 @@
+"""
 streamlit==1.35.0
 pandas
-supabase==2.3.0
+supabase==2.3.0      # optional, safe even without keys
 rich==13.7.0
+"""
