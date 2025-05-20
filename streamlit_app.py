@@ -1,29 +1,18 @@
 # streamlit_app.py – CATPrep × MacroTracker 𝘷3 (Duolingo‑style)
 """
-Sprint‑2 overhaul aiming for ~90 % Duolingo feel **within pure‑Streamlit limits**:
-———————————————————————————————————————————————
-✔️ Sticky XP / Streak ribbon (kept)  
-✔️ Selectable daily study goal & progress bar (kept)  
-✔️ Lottie celebration at 100 % (kept)  
-NEW ⭐ **Lesson Path** page – shows upcoming study blocks with completion ticks  
-NEW ⭐ **10‑min Session Timer** – auto‑grants XP at finish (tight feedback loop)  
-NEW ⭐ **Streak Shield** (1 per week) – prevents accidental streak break  
-NEW ⭐ **Simple Leaderboard** (local fallback; Supabase enabled if creds exist)  
+CATPrep × MacroTracker 𝘷3 (Duolingo‑style)
+-------------------------------------------
+Sprint‑2 overhaul aiming for ~90 % Duolingo feel inside Streamlit.
 
-All features still run **offline** (session‑only) yet upgrade seamlessly when
-Supabase keys are provided.
+Features now live:
+• Sticky XP/Streak ribbon  
+• User‑selectable daily goal & progress bar  
+• Lottie celebration at 100 %  
+• Lesson Path, 10‑min session timer, Streak Shield, Leaderboard  
 
-> **requirements.txt** (external file)  
-> ```
-> streamlit==1.35.0
-> pandas
-> streamlit-lottie
-> streamlit-extras    # for countdown timer UI
-> rich==13.7.0
-> supabase==2.3.0     # optional
-> ```
+Works offline; adds Supabase sync if creds are provided.
 """
-from streamlit_extras.row import row        # new widget
+
 from __future__ import annotations
 from datetime import date, timedelta, datetime
 import time, json, random
@@ -240,7 +229,3 @@ page_map = {
     "Stats": page_stats,
 }
 page_map[choice]()
-
-st.components.v1.iframe("https://my-leaderboard.vercel.app",
-                        height=450, scrolling=False)
-
