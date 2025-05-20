@@ -1,29 +1,50 @@
-# streamlit_app.py – Gamified CAT Prep × Nutrition Tracker
+# streamlit_app.py – Gamified CAT Prep × Nutrition Tracker
 """
-**Offline‑friendly** version – works *with or without* Supabase credentials.
+Offline‑friendly Streamlit MVP that *optionally* syncs to Supabase.
 
-Key upgrades vs last draft
-- Falls back to in‑session storage if Supabase keys are absent → you can test locally or on Streamlit Cloud without any external DB.
-- Smooth onboarding flow even in offline mode.
-- All Supabase calls wrapped in `if supabase:` guards.
+🚀 **Deploy checklist**
+1. **streamlit_app.py** → repo root (this file).
+2. **requirements.txt** (separate file, *not* embedded in code) — copy/paste:
+   ```
+   streamlit==1.35.0
+   pandas
+   supabase==2.3.0   # optional; harmless if you don’t add keys
+   rich==13.7.0       # pin required, avoids Streamlit conflict
+   ```
+3. (Optional) Add Supabase creds to *Secrets* → `SUPABASE_URL`, `SUPABASE_KEY`.
+   If you skip this step the app still works, but data resets when the session ends.
 
-> **Deploy steps**
-> 1. Put this file in your repo root.
-> 2. `requirements.txt` (see end of file).
-> 3. (Optional) Add Supabase credentials in *Secrets* to enable cloud persistence.
+**Why the build kept installing rich 14.0.0**
+Streamlit Cloud only reads *requirements.txt*. When we placed the list inside
+this Python file it was ignored — so pip grabbed the newest `rich` (14.x).
+Pinning in an **external file** fixes the dependency resolver error.
 """
 from __future__ import annotations
 from datetime import date, timedelta
 import streamlit as st
 import pandas as pd
 
-# Optional Supabase import – only if keys supplied
+# ───────── Optional Supabase import ─────────
 try:
     from supabase import create_client, Client  # type: ignore
 except ModuleNotFoundError:
     Client = None  # type: ignore
 
-# ───────────────────────────── Supabase helpers ──────────────────────────────
+# ───────── Constants ─────────
+SECTIONS = ("VARC", "DILR", "QA")
+XP_PER_MIN = 1
+MEAL_BONUS = 5
+
+# ───────── Helpers ─────────
+
+def today() -> date:
+    return date.today()
+
+
+def today_section() -> str:
+    return SECTIONS[today().toordinal() % len(SECTIONS)]
+
+
 @st.cache_resource(show_spinner=False)
 def get_supabase() -> Client | None:
     url = st.secrets.get("SUPABASE_URL")
@@ -34,31 +55,15 @@ def get_supabase() -> Client | None:
 
 supabase = get_supabase()
 
-# ───────────────────────────── App‑level constants ───────────────────────────
-SECTIONS = ("VARC", "DILR", "QA")
-XP_PER_MIN = 1
-MEAL_BONUS = 5
-
-# ───────────────────────────── State & helpers ───────────────────────────────
-
-def today() -> date:
-    return date.today()
-
-
-def today_section() -> str:
-    return SECTIONS[today().toordinal() % len(SECTIONS)]
-
 
 def init_session():
-    """Ensure necessary keys exist in st.session_state."""
     st.session_state.setdefault("profile", None)
-    st.session_state.setdefault("study_log", [])  # list[dict]
+    st.session_state.setdefault("study_log", [])
     st.session_state.setdefault("meal_log", [])
 
 init_session()
 
-
-# ───────────────────────────── Onboarding flow ───────────────────────────────
+# ───────── On‑boarding ─────────
 
 def onboarding():
     st.title("🎯 Welcome – Set your goals")
@@ -69,7 +74,7 @@ def onboarding():
         macro_goal = st.selectbox("Gym nutrition goal", ("Cut", "Bulk", "Maintain"))
         if st.form_submit_button("Save & Start"):
             profile = {
-                "id": "demo" if not supabase else None,  # Supabase will assign id
+                "id": "demo" if not supabase else None,
                 "name": name,
                 "exam_date": exam_date.isoformat(),
                 "target_percentile": target,
@@ -84,7 +89,7 @@ def onboarding():
             st.session_state.profile = profile
             st.experimental_rerun()
 
-# ───────────────────────────── Gamification utils ────────────────────────────
+# ───────── Gamification ─────────
 
 def award_xp(amount: int):
     st.session_state.profile["xp"] += amount
@@ -93,12 +98,11 @@ def award_xp(amount: int):
 def bump_streak():
     last = st.session_state.profile.get("last_active")
     if last == today().isoformat():
-        return  # already counted today
-    # simplistic streak logic
-    st.session_state.profile["streak"] = st.session_state.profile.get("streak", 0) + 1
+        return
+    st.session_state.profile["streak"] += 1
     st.session_state.profile["last_active"] = today().isoformat()
 
-# ───────────────────────────── Pages ─────────────────────────────────────────
+# ───────── Pages ─────────
 
 def page_home():
     p = st.session_state.profile
@@ -112,7 +116,6 @@ def page_study():
     st.header("📚 Study Session")
     mins = st.number_input("Minutes just studied", 0, 180, step=5)
     if st.button("Log study") and mins > 0:
-        # Local session log
         st.session_state.study_log.append({"date": today(), "minutes": int(mins)})
         if supabase:
             supabase.table("study_log").insert({
@@ -128,17 +131,14 @@ def page_study():
 
 def page_meals():
     st.header("🍽️ Meal Logger")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    item = c1.text_input("Item")
-    cal = c2.number_input("Cal", 0)
-    protein = c3.number_input("Protein", 0)
-    carbs = c4.number_input("Carbs", 0)
-    fat = c5.number_input("Fat", 0)
+    cols = st.columns(5)
+    item = cols[0].text_input("Item")
+    cal = cols[1].number_input("Cal", 0)
+    protein = cols[2].number_input("Protein", 0)
+    carbs = cols[3].number_input("Carbs", 0)
+    fat = cols[4].number_input("Fat", 0)
     if st.button("Add meal") and item:
-        entry = {
-            "date": today(), "item": item,
-            "cal": int(cal), "protein": int(protein), "carbs": int(carbs), "fat": int(fat)
-        }
+        entry = {"date": today(), "item": item, "cal": int(cal), "protein": int(protein), "carbs": int(carbs), "fat": int(fat)}
         st.session_state.meal_log.append(entry)
         if supabase:
             supabase.table("meal_log").insert({"user_id": st.session_state.profile["id"], **entry}).execute()
@@ -156,27 +156,19 @@ def page_dashboard():
     else:
         st.info("No study data yet.")
 
-# ───────────────────────────── Router ────────────────────────────────────────
+# ───────── Router ─────────
 if st.session_state.profile is None:
     onboarding()
     st.stop()
 
 st.sidebar.title("Menu")
-route = st.sidebar.radio("Go to", ("Home", "Study", "Meals", "Dashboard"))
+page = st.sidebar.radio("Navigate", ("Home", "Study", "Meals", "Dashboard"))
 
-if route == "Home":
+if page == "Home":
     page_home()
-elif route == "Study":
+elif page == "Study":
     page_study()
-elif route == "Meals":
+elif page == "Meals":
     page_meals()
 else:
     page_dashboard()
-
-# ───────────────────────────── requirements.txt ─────────────────────────────
-"""
-streamlit==1.35.0
-pandas
-supabase==2.3.0      # optional, safe even without keys
-rich==13.7.0
-"""
