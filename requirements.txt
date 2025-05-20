@@ -1,9 +1,6 @@
 streamlit==1.35.0
 pandas
 streamlit-lottie
-streamlit-extras      # countdown timer + layout helpers
-rich==13.7.0          # pinned to keep Streamlit happy
-supabase==2.3.0       # optional – only needed if you’ll connect to Supabase
-
-streamlit-extras     # bundle of cool widgets
-
+streamlit-extras
+rich==13.7.0
+supabase==2.3.0      # optional – safe to leave in
