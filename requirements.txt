@@ -1,4 +1,4 @@
 streamlit==1.35.0
 pandas
-supabase==2.3.0
+streamlit-lottie
 rich==13.7.0
