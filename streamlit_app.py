@@ -1,37 +1,29 @@
 # streamlit_app.py – CATPrep × MacroTracker 𝘷3 (Duolingo‑style)
 """
-CATPrep × MacroTracker 𝘷3 (Duolingo‑style)
--------------------------------------------
 Sprint‑2 overhaul aiming for ~90 % Duolingo feel inside Streamlit.
 
-Features now live:
-• Sticky XP/Streak ribbon  
-• User‑selectable daily goal & progress bar  
-• Lottie celebration at 100 %  
-• Lesson Path, 10‑min session timer, Streak Shield, Leaderboard  
+Features
+─────────
+✔ Sticky XP/Streak ribbon  
+✔ User‑selectable daily goal & progress bar  
+✔ Lottie celebration at 100 %  
+✔ Lesson Path, 10‑min session timer, Streak Shield, Leaderboard  
 
-Works offline; adds Supabase sync if creds are provided.
+Runs offline; adds Supabase sync when credentials are provided.
 """
 
 from __future__ import annotations
 from datetime import date, timedelta, datetime
-import time, json, random
+import time, random
 import streamlit as st
 import pandas as pd
+
+# Optional Streamlit‑extras widgets
 try:
-    from streamlit_extras.row import row  # simple 3‑col row helper
-    from streamlit_extras.stylable_container import stylable_container
+    from streamlit_extras.row import row       # 3‑column helper
 except ModuleNotFoundError:
     def row(*_, **__):
         return st.columns(1)
-    def stylable_container(*a, **k):
-        return st.container()
-
-# Optional Supabase
-try:
-    from supabase import create_client, Client  # type: ignore
-except ModuleNotFoundError:
-    Client = None  # type: ignore
 
 # ───────────────────────── Config ─────────────────────────
 SECTIONS = ("VARC", "DILR", "QA")
@@ -41,38 +33,46 @@ MEAL_BONUS = 5
 SESSION_LENGTH = 10  # minutes
 
 # ──────────────────────── Supabase init ───────────────────
+try:
+    from supabase import create_client, Client  # type: ignore
+except ModuleNotFoundError:
+    Client = None  # type: ignore
+
 @st.cache_resource(show_spinner=False)
 def get_supabase() -> Client | None:
-    """Try to create the Supabase client; on any error fall back to None.
-    This prevents the entire app from crashing if creds are wrong or a
-    dependency version mismatch occurs. You’ll still get offline mode.
+    """Return a Supabase client or **None** if creds missing/invalid.
+    Swallows all exceptions so the app keeps running in offline mode.
     """
-    url, key = st.secrets.get("SUPABASE_URL"), st.secrets.get("SUPABASE_KEY")
+    url = st.secrets.get("SUPABASE_URL")
+    key = st.secrets.get("SUPABASE_KEY")
     if not (url and key and Client):
         return None
     try:
-        return create_client(url, key)
-    except Exception as e:
-        st.warning("Supabase connection failed → running in offline mode.
-" \
-                   f"Details: {e.__class__.__name__}")
+        return create_client(url, key)  # type: ignore[arg-type]
+    except Exception as e:  # noqa: BLE001
+        st.warning(
+            "Supabase connection failed — running in offline mode.\n"
+            f"Details: {e.__class__.__name__}")
         return None
+
 supabase = get_supabase()
 
 # ─────────────────────── Session init ────────────────────
 ss = st.session_state
-for k, v in {
+_defaults = {
     "profile": None,
     "study_log": [],
     "meal_log": [],
     "goal_minutes": GOALS["Regular"],
     "celebrated": False,
     "streak_shield": 1,
-}.items():
+}
+for k, v in _defaults.items():
     ss.setdefault(k, v)
 
 # ─────────────────────── Helper funcs ────────────────────
-def today():
+
+def today() -> date:
     return date.today()
 
 def today_section() -> str:
@@ -91,7 +91,6 @@ def bump_streak():
     ss.profile["last_active"] = today().isoformat()
 
 def maybe_break_streak():
-    # simulate midnight check – called on app start
     last = datetime.fromisoformat(ss.profile["last_active"]).date()
     if last < today() - timedelta(days=1):
         if ss.streak_shield > 0:
@@ -119,123 +118,102 @@ def onboarding():
 # ─────────────────────── UI bits ────────────────────────
 
 def sticky_ribbon():
-    col1, col2, col3 = st.columns([1,1,1])
+    col1, col2, col3 = st.columns(3)
     col1.metric("🔥 Streak", ss.profile["streak"])
     col2.metric("⭐ XP", ss.profile["xp"])
     col3.metric("🛡️ Shield", ss.streak_shield)
     st.markdown("---")
 
-# Lottie loader
-@st.cache_data(show_spinner=False)
-def lottie_confetti():
-    import requests, os
-    url = "https://raw.githubusercontent.com/iamnotstatic/lottie-files/main/confetti.json"
-    try:
-        return requests.get(url, timeout=5).json()
-    except Exception:
-        return {}
-
 # ─────────────────────── Pages ─────────────────────────
 
-## Home / Dashboard
 def page_home():
     sticky_ribbon()
     st.header("🏠 Home")
     logged = minutes_today()
-    pct = min(int(logged/ss.goal_minutes*100),100)
-    st.subheader(f"Today: {logged}/{ss.goal_minutes} min • {pct}%")
-    st.progress(pct/100)
-    if pct==100 and not ss.celebrated:
+    pct = min(int(logged / ss.goal_minutes * 100), 100)
+    st.subheader(f"Today: {logged}/{ss.goal_minutes} min • {pct}%")
+    st.progress(pct / 100)
+    if pct == 100 and not ss.celebrated:
         try:
-            from streamlit_lottie import st_lottie
-            st_lottie(lottie_confetti(), height=250, loop=False)
+            from streamlit_lottie import st_lottie  # type: ignore
+            import requests
+            confetti = requests.get(
+                "https://raw.githubusercontent.com/iamnotstatic/"
+                "lottie-files/main/confetti.json", timeout=5).json()
+            st_lottie(confetti, height=250, loop=False)
         except Exception:
             st.balloons()
-        ss.celebrated=True
+        ss.celebrated = True
     st.info(f"Focus section: **{today_section()}**")
 
-## Study logger + 10‑min session timer
+
 def page_study():
     sticky_ribbon()
     st.header("📚 Study")
-    colA,colB = st.columns(2)
+    colA, colB = st.columns(2)
     with colA:
-        mins = st.number_input("Add minutes",0,180,5)
-        if st.button("Save") and mins>0:
+        mins = st.number_input("Add minutes", 0, 180, 5)
+        if st.button("Save") and mins > 0:
             ss.study_log.append({"date": today(), "minutes": int(mins)})
-            award_xp(mins*XP_PER_MIN)
+            award_xp(mins * XP_PER_MIN)
             bump_streak()
             st.experimental_rerun()
     with colB:
         if st.button("Start 10‑min session"):
             placeholder = st.empty()
-            for sec in range(SESSION_LENGTH*60, -1, -1):
-                m,s = divmod(sec,60)
+            for sec in range(SESSION_LENGTH * 60, -1, -1):
+                m, s = divmod(sec, 60)
                 placeholder.subheader(f"⏰ {m:02d}:{s:02d}")
                 time.sleep(1)
             placeholder.subheader("Session done!")
             ss.study_log.append({"date": today(), "minutes": SESSION_LENGTH})
-            award_xp(SESSION_LENGTH*XP_PER_MIN)
+            award_xp(SESSION_LENGTH * XP_PER_MIN)
             bump_streak()
             st.experimental_rerun()
 
-## Meal logger
+
 def page_meals():
     sticky_ribbon()
     st.header("🍽️ Meal")
     r = row(5, vertical_align="center")
     item = r.text_input("Item")
-    cal = r.number_input("Cal",0)
-    protein = r.number_input("P",0)
-    carbs = r.number_input("C",0)
-    fat = r.number_input("F",0)
+    cal = r.number_input("Cal", 0)
+    protein = r.number_input("P", 0)
+    carbs = r.number_input("C", 0)
+    fat = r.number_input("F", 0)
     if r.button("Add") and item:
-        ss.meal_log.append({"date": today(),"item":item,"cal":int(cal),"protein":int(protein),"carbs":int(carbs),"fat":int(fat)})
+        ss.meal_log.append({
+            "date": today(),
+            "item": item,
+            "cal": int(cal),
+            "protein": int(protein),
+            "carbs": int(carbs),
+            "fat": int(fat),
+        })
         award_xp(MEAL_BONUS)
         bump_streak()
         st.toast("Saved! 🍏")
         st.experimental_rerun()
 
-## Lesson Path
+
 def page_path():
     sticky_ribbon()
     st.header("🛤️ Lesson Path (7‑day)")
     for i in range(7):
-        dt = today()+timedelta(days=i)
-        section=SECTIONS[dt.toordinal()%len(SECTIONS)]
-        done = any(e["date"]==dt for e in ss.study_log)
-        status = "✅" if done else ("🔒" if i>0 else "➡️")
-        st.write(f"{status} **{dt.strftime('%a %d %b')}** – {section}")
+        dt = today() + timedelta(days=i)
+        section = SECTIONS[dt.toordinal() % len(SECTIONS)]
+        done = any(e["date"] == dt for e in ss.study_log)
+        icon = "✅" if done else ("🔒" if i > 0 else "➡️")
+        st.write(f"{icon} **{dt.strftime('%a %d %b')}** – {section}")
 
-## Stats / Leaderboard
+
 def page_stats():
     sticky_ribbon()
     st.header("📊 Stats & Leaderboard")
     df = pd.DataFrame(ss.study_log)
     if not df.empty:
-        weekly = df.groupby("date",as_index=False)["minutes"].sum()
+        weekly = df.groupby("date", as_index=False)["minutes"].sum()
         st.line_chart(weekly.set_index("date"))
-    # Local leaderboard demo
-    data=[{"name":ss.profile["name"],"xp":ss.profile["xp"]}]
-    for n in ["Amit","Sara","Ling","Carlos","Mia"]:
-        data.append({"name":n,"xp":random.randint(100,500)})
-    board=pd.DataFrame(sorted(data,key=lambda x:-x["xp"]))
-    st.table(board.head(5))
-
-# ────────────────── Router ────────────────────────
-if ss.profile is None:
-    onboarding()
-    st.stop()
-
-maybe_break_streak()
-
-st.sidebar.title("Navigate")
-choice = st.sidebar.radio("", ("Home","Study","Meals","Path","Stats"))
-page_map = {
-    "Home": page_home,
-    "Study": page_study,
-    "Meals": page_meals,
-    "Path": page_path,
-    "Stats": page_stats,
-}
-page_map[choice]()
+    # toy leaderboard
+    sample = [
+        {"name": ss.profile["name"], "xp": ss.profile
