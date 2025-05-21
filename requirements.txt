@@ -3,4 +3,5 @@ pandas
 streamlit-lottie
 streamlit-extras
 rich==13.7.0
-supabase==2.3.0      # optional – safe to leave in
+supabase==2.3.0        # optional cloud sync
+httpx==0.24.1          # pin (<0.25) so Supabase auth works
