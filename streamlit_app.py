@@ -43,10 +43,20 @@ SESSION_LENGTH = 10  # minutes
 # ──────────────────────── Supabase init ───────────────────
 @st.cache_resource(show_spinner=False)
 def get_supabase() -> Client | None:
+    """Try to create the Supabase client; on any error fall back to None.
+    This prevents the entire app from crashing if creds are wrong or a
+    dependency version mismatch occurs. You’ll still get offline mode.
+    """
     url, key = st.secrets.get("SUPABASE_URL"), st.secrets.get("SUPABASE_KEY")
-    if url and key and Client:
+    if not (url and key and Client):
+        return None
+    try:
         return create_client(url, key)
-    return None
+    except Exception as e:
+        st.warning("Supabase connection failed → running in offline mode.
+" \
+                   f"Details: {e.__class__.__name__}")
+        return None
 supabase = get_supabase()
 
 # ─────────────────────── Session init ────────────────────
