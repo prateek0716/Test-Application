@@ -206,14 +206,26 @@ def page_path():
         icon = "✅" if done else ("🔒" if i > 0 else "➡️")
         st.write(f"{icon} **{dt.strftime('%a %d %b')}** – {section}")
 
-
 def page_stats():
     sticky_ribbon()
     st.header("📊 Stats & Leaderboard")
+
+    # study chart
     df = pd.DataFrame(ss.study_log)
     if not df.empty:
         weekly = df.groupby("date", as_index=False)["minutes"].sum()
         st.line_chart(weekly.set_index("date"))
-    # toy leaderboard
+    else:
+        st.info("No study data yet.")
+
+    # simple leaderboard (demo data)
     sample = [
-        {"name": ss.profile["name"], "xp": ss.profile
+        {"name": ss.profile["name"], "xp": ss.profile["xp"]},
+        {"name": "Amit",   "xp": 450},
+        {"name": "Sara",   "xp": 380},
+        {"name": "Ling",   "xp": 320},
+        {"name": "Carlos", "xp": 290},
+    ]
+    board = pd.DataFrame(sorted(sample, key=lambda x: -x["xp"]))
+    st.table(board.head(5))
+
